@@ -42,15 +42,18 @@ async function processTicketCreation(payload, env) {
     const channelId = payload.channel?.id || payload.channel_id;
     const triggerId = payload.trigger_id;
 
-    // Get message text directly from payload (faster than API call)
-    const messageText = payload.message?.text || '';
+    // Fallback message text from payload
+    const fallbackText = payload.message?.text || '';
 
     // Run ALL async operations in parallel for speed
-    const [permalink, summary, projects] = await Promise.all([
+    const [permalink, threadMessages, projects] = await Promise.all([
       getSlackPermalink(channelId, messageTs, env.SLACK_BOT_TOKEN),
-      summarizeThread(messageText, env.AI),
+      fetchSlackThread(channelId, messageTs, env.SLACK_BOT_TOKEN, fallbackText),
       fetchZohoProjects(env)
     ]);
+
+    // Now summarize the thread (after we have the messages)
+    const summary = await summarizeThread(threadMessages, env.AI);
 
     await openModal(triggerId, summary, permalink, channelId, messageTs, projects, env.SLACK_BOT_TOKEN);
 
@@ -71,22 +74,63 @@ async function getSlackPermalink(channelId, messageTs, token) {
   return data.permalink || `https://slack.com/archives/${channelId}/p${messageTs.replace('.', '')}`;
 }
 
-async function summarizeThread(messageText, ai) {
+async function fetchSlackThread(channelId, messageTs, token, fallbackText) {
+  try {
+    // Get the message to check if it's part of a thread
+    const historyRes = await fetch(
+      `https://slack.com/api/conversations.history?channel=${channelId}&latest=${messageTs}&limit=1&inclusive=true`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const historyData = await historyRes.json();
+
+    if (!historyData.ok || !historyData.messages?.[0]) {
+      return fallbackText;
+    }
+
+    const parentMessage = historyData.messages[0];
+    const threadTs = parentMessage.thread_ts || messageTs;
+
+    // If there's a thread, fetch all replies
+    if (parentMessage.thread_ts || parentMessage.reply_count > 0) {
+      const repliesRes = await fetch(
+        `https://slack.com/api/conversations.replies?channel=${channelId}&ts=${threadTs}&limit=50`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const repliesData = await repliesRes.json();
+
+      if (repliesData.ok && repliesData.messages?.length > 0) {
+        // Combine all messages in thread
+        return repliesData.messages
+          .map(m => m.text || '')
+          .filter(t => t)
+          .join('\n\n---\n\n');
+      }
+    }
+
+    // No thread, just return the single message
+    return parentMessage.text || fallbackText;
+  } catch (e) {
+    // On any error, fall back to payload text
+    return fallbackText;
+  }
+}
+
+async function summarizeThread(threadText, ai) {
   // Strip Slack markdown from input
-  const cleanText = messageText
+  const cleanText = threadText
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/_([^_]+)_/g, '$1')
     .replace(/~([^~]+)~/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
-    .substring(0, 1200);
+    .substring(0, 2000);  // Allow more context for threads
 
-  const prompt = `Extract a title and description from this message. Output ONLY in this exact format, nothing else:
+  const prompt = `Extract a title and description from this Slack conversation. Output ONLY in this exact format:
 
-TITLE: <short title>
+TITLE: <short descriptive title>
 DESCRIPTION:
-<bullet points>
+<key points from the conversation>
 
-Message:
+Conversation:
 ${cleanText}`;
 
   const response = await ai.run('@cf/meta/llama-3.1-8b-instruct', {
