@@ -7,6 +7,13 @@ export default {
   async fetch(request, env, ctx) {
     if (request.method === 'POST') {
       const body = await request.clone().text();
+
+      // Verify Slack signature (security)
+      const isValid = await verifySlackSignature(request, body, env.SLACK_SIGNING_SECRET);
+      if (!isValid) {
+        return new Response('Invalid signature', { status: 401 });
+      }
+
       const payload = parsePayload(body);
 
       if (payload.type === 'url_verification') {
@@ -26,6 +33,36 @@ export default {
     return new Response('Slack-Zoho Ticket Creator Active', { status: 200 });
   }
 };
+
+async function verifySlackSignature(request, body, signingSecret) {
+  if (!signingSecret) return true; // Skip if not configured
+
+  const timestamp = request.headers.get('x-slack-request-timestamp');
+  const slackSignature = request.headers.get('x-slack-signature');
+
+  if (!timestamp || !slackSignature) return false;
+
+  // Prevent replay attacks (reject if older than 5 minutes)
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - parseInt(timestamp)) > 300) return false;
+
+  // Compute signature
+  const sigBaseString = `v0:${timestamp}:${body}`;
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(signingSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(sigBaseString));
+  const computedSignature = 'v0=' + Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+
+  return computedSignature === slackSignature;
+}
 
 function parsePayload(body) {
   if (body.startsWith('{')) {
