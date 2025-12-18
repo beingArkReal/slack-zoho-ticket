@@ -1,0 +1,21 @@
+name = "slack-zoho-ticket"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Enable Workers AI (free tier)
+[ai]
+binding = "AI"
+
+# KV for caching (free tier: 100k reads/day)
+[[kv_namespaces]]
+binding = "CACHE"
+id = "e58431ea42c144d796dd0e8b5912698f"
+
+# Environment variables - set these via `wrangler secret put`
+# SLACK_BOT_TOKEN
+# SLACK_SIGNING_SECRET
+# ZOHO_CLIENT_ID
+# ZOHO_CLIENT_SECRET
+# ZOHO_REFRESH_TOKEN
+# ZOHO_PORTAL_ID
+# ZOHO_PROJECT_ID

@@ -1,0 +1,14 @@
+{
+  "name": "slack-zoho-ticket",
+  "version": "1.0.0",
+  "description": "Create Zoho Projects tickets from Slack messages with AI summarization",
+  "main": "worker.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
